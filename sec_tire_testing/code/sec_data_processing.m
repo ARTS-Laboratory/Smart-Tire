@@ -160,7 +160,7 @@ end
 
 %% ================= EXPORT CLEANED CSV =================
 
-outCsv = fullfile(folderName, [baseName '_cleaned_filtered.csv']);
+outCsv = fullfile(folderName, [baseName '_filtered.csv']);
 
 T = table(t, 'VariableNames', {'time_s'});
 

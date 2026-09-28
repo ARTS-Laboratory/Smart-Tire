@@ -1,73 +1,88 @@
 %% ================================================================
-%  clean_DOT_force.m
-%  Picks a DOT file, extracts one Test Run, low-pass filters Force
+%  clean_DOT_force_single.m
+%  Picks a DOT CSV file containing one test run, low-pass filters Force
 %  (Displacement optional), and saves a cleaned CSV.
 % ================================================================
 
 clear; clc; close all;
 
 %% ---- USER SETTINGS ----
-cutoffHz      = 5;      % low-pass cutoff for Force. Try 2, 5, or 10 Hz.
-filterDisp    = false;  % set true if you also want Displacement smoothed
+cutoffHz  = 5;      % low-pass cutoff for Force. Try 2, 5, or 10 Hz.
+filterDisp = false; % set true if you also want Displacement smoothed
 
 %% ---- 1. Pick DOT file ----
 [dotName, dotFolder] = uigetfile({'*.csv','CSV files (*.csv)'}, ...
-    'Select the DOT file (e.g. DOTTireTest.csv)');
+    'Select the DOT CSV file');
+
 if isequal(dotName, 0)
     error('No DOT file selected.');
 end
+
 dotFile = fullfile(dotFolder, dotName);
 
-%% ---- 2. Parse DOT file into Test Run blocks ----
-fid = fopen(dotFile, 'rt');
-raw = textscan(fid, '%s', 'Delimiter', '\n', 'Whitespace', '');
-fclose(fid);
-lines = raw{1};
+%% ---- 2. Read the single test run ----
+T = readtable(dotFile, 'VariableNamingRule', 'preserve');
 
-runStartIdx = [];
-runIDs      = [];
-for i = 1:numel(lines)
-    tok = regexp(lines{i}, '"Test Run: Test Run (\d+)"', 'tokens');
-    if ~isempty(tok)
-        runStartIdx(end+1) = i; %#ok<AGROW>
-        runIDs(end+1)      = str2double(tok{1}{1}); %#ok<AGROW>
-    end
-end
-runStartIdx(end+1) = numel(lines) + 1;
+% Display the column names so you can see what was found
+fprintf('\nColumns found in file:\n');
+disp(T.Properties.VariableNames');
 
-fprintf('Test Runs found in DOT file: %s\n\n', mat2str(runIDs));
+%% ---- 3. Find the needed columns ----
+varNames = string(T.Properties.VariableNames);
 
-%% ---- 3. Ask which Test Run to clean ----
-targetRun = input('Which Test Run do you want to clean? ');
+% Find time column
+timeIdx = find(contains(lower(varNames), "runningtime") | ...
+               contains(lower(varNames), "time"), 1);
 
-blockIdx = find(runIDs == targetRun);
-if isempty(blockIdx)
-    error('Test Run %d not found.', targetRun);
-end
-blockStart = runStartIdx(blockIdx);
-blockEnd   = runStartIdx(blockIdx+1) - 1;
+% Find displacement column
+dispIdx = find(contains(lower(varNames), "displacement"), 1);
 
-colHeaderIdx = find(contains(lines(blockStart:blockEnd), 'Axial Displacement'), 1) + blockStart - 1;
-dataStartIdx = colHeaderIdx + 2;
-dataLines = lines(dataStartIdx:blockEnd);
+% Find force column
+forceIdx = find(contains(lower(varNames), "force"), 1);
 
-disp_m = []; force_N = []; runTime = [];
-for i = 1:numel(dataLines)
-    vals = sscanf(dataLines{i}, '%f,%f,%f');
-    if numel(vals) == 3
-        disp_m(end+1,1)  = vals(1); %#ok<AGROW>
-        force_N(end+1,1) = vals(2); %#ok<AGROW>
-        runTime(end+1,1) = vals(3); %#ok<AGROW>
-    end
+if isempty(timeIdx)
+    error('Could not find a time column.');
 end
 
-%% ---- 4. Estimate sample rate ----
+if isempty(dispIdx)
+    error('Could not find a displacement column.');
+end
+
+if isempty(forceIdx)
+    error('Could not find a force column.');
+end
+
+fprintf('\nUsing columns:\n');
+fprintf('Time:         %s\n', varNames(timeIdx));
+fprintf('Displacement: %s\n', varNames(dispIdx));
+fprintf('Force:        %s\n', varNames(forceIdx));
+
+%% ---- 4. Extract columns ----
+runTime = T{:, timeIdx};
+disp_m  = T{:, dispIdx};
+force_N = T{:, forceIdx};
+
+%% ---- 5. Clean invalid values ----
+good = isfinite(runTime) & isfinite(disp_m) & isfinite(force_N);
+
+runTime = runTime(good);
+disp_m  = disp_m(good);
+force_N = force_N(good);
+
+% Remove duplicate time values
+[runTime, idx] = unique(runTime);
+disp_m  = disp_m(idx);
+force_N = force_N(idx);
+
+%% ---- 6. Estimate sample rate ----
 dt = median(diff(runTime));
 fs = 1/dt;
-fprintf('Estimated sample rate: %.2f Hz\n', fs);
 
-%% ---- 5. Low-pass filter Force (and optionally Displacement) ----
+fprintf('\nEstimated sample rate: %.2f Hz\n', fs);
+
+%% ---- 7. Low-pass filter Force (and optionally Displacement) ----
 fc = min(cutoffHz, 0.45*fs);
+
 [b, a] = butter(4, fc/(fs/2), 'low');
 
 force_filtered = filtfilt(b, a, force_N);
@@ -75,22 +90,49 @@ force_filtered = filtfilt(b, a, force_N);
 if filterDisp
     disp_filtered = filtfilt(b, a, disp_m);
 else
-    disp_filtered = disp_m;  % unchanged
+    disp_filtered = disp_m;
 end
 
-%% ---- 6. Plot raw vs filtered Force (sanity check) ----
+%% ---- 8. Plot raw vs filtered Force ----
 figure;
-plot(runTime, force_N, 'Color',[0.85 0.85 0.85], 'DisplayName','Raw'); hold on;
-plot(runTime, force_filtered, 'LineWidth',1.5, 'DisplayName','Filtered');
-xlabel('Running Time (s)'); ylabel('Axial Force (N)');
-title(sprintf('Force Raw vs Filtered (Test Run %d)', targetRun));
-legend('Location','best'); grid on;
 
-%% ---- 7. Save cleaned CSV ----
-T = table(runTime, disp_m, disp_filtered, force_N, force_filtered, ...
-    'VariableNames', {'RunningTime_s','Displacement_raw_m','Displacement_m', ...
-    'Force_raw_N','Force_N'});
+plot(runTime, force_N, ...
+    'Color',[0.85 0.85 0.85], ...
+    'DisplayName','Raw');
 
-outName = fullfile(dotFolder, sprintf('TestRun%d_cleaned.csv', targetRun));
-writetable(T, outName);
+hold on;
+
+plot(runTime, force_filtered, ...
+    'LineWidth',1.5, ...
+    'DisplayName','Filtered');
+
+xlabel('Running Time (s)');
+ylabel('Axial Force (N)');
+title('Force Raw vs Filtered');
+
+legend('Location','best');
+grid on;
+
+%% ---- 9. Save cleaned CSV ----
+T_cleaned = table( ...
+    runTime, ...
+    disp_m, ...
+    disp_filtered, ...
+    force_N, ...
+    force_filtered, ...
+    'VariableNames', { ...
+    'RunningTime_s', ...
+    'Displacement_raw_m', ...
+    'Displacement_m', ...
+    'Force_raw_N', ...
+    'Force_N'});
+
+% Keep the original filename and add "_cleaned"
+[~, baseName, ~] = fileparts(dotName);
+
+outName = fullfile(dotFolder, ...
+    sprintf('%s_filtered.csv', baseName));
+
+writetable(T_cleaned, outName);
+
 fprintf('\nSaved cleaned data to:\n%s\n', outName);
