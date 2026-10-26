@@ -1,47 +1,47 @@
+
 %% ================================================================
-%  mts_data_processing.m
+%  MTS_Data_Filtering.m
 %
-%  Reads an MTS CSV containing MULTIPLE Test Runs.
-%  Finds all available Test Runs, asks which one to process,
-%  extracts that run, low-pass filters Force
-%  (Displacement optional), and saves an individual filtered CSV.
+%  Reads an MTS CSV containing ONE complete test run.
+%  Cleans the data, low-pass filters Force
+%  (Displacement optional), and saves a filtered CSV.
+%
+%  No Test Run selection or time-range input required.
 % ================================================================
 
 clear; clc; close all;
 
 %% ---- USER SETTINGS ----
-cutoffHz   = 5;      % low-pass cutoff for Force (Hz)
-filterDisp = false;  % true = also filter displacement
+cutoffHz   = 5;      % Low-pass cutoff for Force (Hz)
+filterDisp = false;  % true = also filter Displacement
 
 
 %% ================================================================
-%  1. PICK MULTI-RUN MTS FILE
+%  1. PICK MTS FILE
 % ================================================================
 
-[dotName, dotFolder] = uigetfile( ...
+[mtsName, mtsFolder] = uigetfile( ...
     {'*.csv','CSV files (*.csv)'}, ...
-    'Select the MTS CSV containing all Test Runs');
+    'Select the MTS CSV file');
 
-if isequal(dotName, 0)
+if isequal(mtsName, 0)
     error('No MTS file selected.');
 end
 
-dotFile = fullfile(dotFolder, dotName);
+mtsFile = fullfile(mtsFolder, mtsName);
 
 
 %% ================================================================
-%  2. READ FILE AS TEXT
+%  2. READ MTS FILE
 % ================================================================
 
-fid = fopen(dotFile, 'rt');
+fid = fopen(mtsFile, 'rt');
 
 if fid == -1
     error('Could not open selected MTS file.');
 end
 
-raw = textscan( ...
-    fid, ...
-    '%s', ...
+raw = textscan(fid, '%s', ...
     'Delimiter', '\n', ...
     'Whitespace', '');
 
@@ -51,171 +51,61 @@ lines = raw{1};
 
 
 %% ================================================================
-%  3. FIND ALL TEST RUNS
+%  3. FIND DATA HEADER
 % ================================================================
 
-runStartIdx = [];
-runIDs      = [];
+% Expected MTS columns:
+%
+% Axial Displacement, Axial Force, Running Time
+% m, N, sec
 
-for i = 1:numel(lines)
+headerIdx = find( ...
+    contains(lines, 'Axial Displacement') & ...
+    contains(lines, 'Axial Force') & ...
+    contains(lines, 'Running Time'), 1);
 
-    % Looks for lines such as:
-    % "Test Run: Test Run 25"
-
-    tok = regexp( ...
-        lines{i}, ...
-        '"?Test Run:\s*Test Run\s*(\d+)"?', ...
-        'tokens');
-
-    if ~isempty(tok)
-
-        runStartIdx(end+1) = i; %#ok<AGROW>
-
-        runIDs(end+1) = ...
-            str2double(tok{1}{1}); %#ok<AGROW>
-
-    end
-
+if isempty(headerIdx)
+    error('Could not find the MTS data header.');
 end
-
-
-%% ---- Make sure runs were found ----
-
-if isempty(runIDs)
-
-    error([ ...
-        'No Test Run blocks were found in the selected file. ' ...
-        'Check that this is the original multi-run MTS CSV.']);
-
-end
-
-
-% Add final boundary so the last Test Run can be extracted
-runStartIdx(end+1) = numel(lines) + 1;
-
-
-%% ---- Display available Test Runs ----
-
-fprintf('\n========================================\n');
-fprintf('Test Runs found in MTS file:\n');
-fprintf('========================================\n');
-
-fprintf('%d ', runIDs);
-
-fprintf('\n========================================\n\n');
 
 
 %% ================================================================
-%  4. ASK WHICH TEST RUN TO PROCESS
-% ================================================================
-
-targetRun = input('Which Test Run do you want to process? ');
-
-
-blockIdx = find(runIDs == targetRun, 1);
-
-
-if isempty(blockIdx)
-
-    error( ...
-        'Test Run %d was not found in the selected MTS file.', ...
-        targetRun);
-
-end
-
-
-%% ---- Determine beginning/end of selected block ----
-
-blockStart = runStartIdx(blockIdx);
-
-blockEnd = runStartIdx(blockIdx + 1) - 1;
-
-
-fprintf('\nProcessing Test Run %d...\n', targetRun);
-
-
-%% ================================================================
-%  5. FIND COLUMN HEADER INSIDE SELECTED RUN
-% ================================================================
-
-selectedBlock = lines(blockStart:blockEnd);
-
-
-% Find row containing Axial Displacement
-headerRelativeIdx = find( ...
-    contains(selectedBlock, 'Axial Displacement'), ...
-    1);
-
-
-if isempty(headerRelativeIdx)
-
-    error( ...
-        'Could not find the data header for Test Run %d.', ...
-        targetRun);
-
-end
-
-
-colHeaderIdx = ...
-    blockStart + headerRelativeIdx - 1;
-
-
-%% ================================================================
-%  6. READ NUMERIC DATA FROM SELECTED RUN
+%  4. EXTRACT NUMERIC DATA
 % ================================================================
 
 disp_m  = [];
 force_N = [];
 runTime = [];
 
+% Start immediately after the header.
+% Unit rows and nonnumeric rows are ignored.
 
-% Start searching immediately after the header.
-% Non-numeric/unit rows are automatically ignored.
-dataLines = lines(colHeaderIdx + 1:blockEnd);
-
+dataLines = lines(headerIdx + 1:end);
 
 for i = 1:numel(dataLines)
-
-    % Expected MTS columns:
-    %
-    % Axial Displacement,
-    % Axial Force,
-    % Running Time
 
     vals = sscanf( ...
         strrep(dataLines{i}, '"', ''), ...
         '%f,%f,%f');
 
-
     if numel(vals) == 3
 
-        disp_m(end+1,1) = vals(1); %#ok<AGROW>
-
+        disp_m(end+1,1)  = vals(1); %#ok<AGROW>
         force_N(end+1,1) = vals(2); %#ok<AGROW>
-
         runTime(end+1,1) = vals(3); %#ok<AGROW>
 
     end
-
 end
-
-
-%% ---- Make sure data were extracted ----
 
 if isempty(runTime)
-
-    error( ...
-        'No numeric data were extracted from Test Run %d.', ...
-        targetRun);
-
+    error('No numeric MTS data were extracted.');
 end
 
-
-fprintf('Extracted %d samples.\n', length(runTime));
+fprintf('\nExtracted %d samples.\n', numel(runTime));
 
 
 %% ================================================================
-%  7. CLEAN INVALID VALUES
+%  5. CLEAN INVALID VALUES
 % ================================================================
 
 good = ...
@@ -223,112 +113,84 @@ good = ...
     isfinite(disp_m) & ...
     isfinite(force_N);
 
-
 runTime = runTime(good);
-
-disp_m = disp_m(good);
-
+disp_m  = disp_m(good);
 force_N = force_N(good);
 
 
-%% ---- Sort BY TIME ----
+%% ---- Sort by time ----
 
 [runTime, sortIdx] = sort(runTime);
 
-disp_m = disp_m(sortIdx);
-
+disp_m  = disp_m(sortIdx);
 force_N = force_N(sortIdx);
 
 
 %% ---- Remove duplicate timestamps ----
 
-[runTime, uniqueIdx] = unique( ...
-    runTime, ...
-    'stable');
+[runTime, uniqueIdx] = unique(runTime, 'stable');
 
-
-disp_m = disp_m(uniqueIdx);
-
+disp_m  = disp_m(uniqueIdx);
 force_N = force_N(uniqueIdx);
 
 
-%% ---- Check data length ----
+%% ================================================================
+%  6. VALIDATE COMPLETE TEST
+% ================================================================
 
-if numel(runTime) < 10
-
-    error( ...
-        'Too few valid samples were found in Test Run %d.', ...
-        targetRun);
-
+if numel(runTime) < 20
+    error('Too few valid samples in the MTS file.');
 end
+
+fprintf('\nUsing entire MTS test.\n');
+fprintf('Start time: %.3f s\n', min(runTime));
+fprintf('End time:   %.3f s\n', max(runTime));
+fprintf('Duration:   %.3f s\n', max(runTime) - min(runTime));
+fprintf('Total samples: %d\n', numel(runTime));
 
 
 %% ================================================================
-%  8. ESTIMATE SAMPLE RATE
+%  7. ESTIMATE SAMPLE RATE
 % ================================================================
 
 dtValues = diff(runTime);
 
-
-% Keep only valid positive time steps
 dtValues = dtValues( ...
-    isfinite(dtValues) & ...
-    dtValues > 0);
-
+    isfinite(dtValues) & dtValues > 0);
 
 if isempty(dtValues)
-
-    error('Could not determine the MTS sampling interval.');
-
+    error('Could not determine the sampling interval.');
 end
 
-
 dt = median(dtValues);
-
 fs = 1 / dt;
-
 
 fprintf('Estimated sample rate: %.2f Hz\n', fs);
 
 
 %% ================================================================
-%  9. LOW-PASS FILTER
+%  8. LOW-PASS FILTER
 % ================================================================
 
-fc = min( ...
-    cutoffHz, ...
-    0.45 * fs);
-
+fc = min(cutoffHz, 0.45 * fs);
 
 if fc <= 0
-
     error('Invalid filter cutoff frequency.');
-
 end
 
-
-[b, a] = butter( ...
-    4, ...
-    fc / (fs/2), ...
-    'low');
+[b, a] = butter(4, fc/(fs/2), 'low');
 
 
 %% ---- Filter Force ----
 
-force_filtered = filtfilt( ...
-    b, ...
-    a, ...
-    force_N);
+force_filtered = filtfilt(b, a, force_N);
 
 
 %% ---- Optionally filter Displacement ----
 
 if filterDisp
 
-    disp_filtered = filtfilt( ...
-        b, ...
-        a, ...
-        disp_m);
+    disp_filtered = filtfilt(b, a, disp_m);
 
 else
 
@@ -338,11 +200,10 @@ end
 
 
 %% ================================================================
-%  10. PLOT RAW VS FILTERED FORCE
+%  9. PLOT RAW VS FILTERED FORCE
 % ================================================================
 
 figure;
-
 
 plot( ...
     runTime, ...
@@ -350,9 +211,7 @@ plot( ...
     'Color', [0.85 0.85 0.85], ...
     'DisplayName', 'Raw');
 
-
 hold on;
-
 
 plot( ...
     runTime, ...
@@ -360,23 +219,16 @@ plot( ...
     'LineWidth', 1.5, ...
     'DisplayName', 'Filtered');
 
-
 xlabel('Running Time (s)');
-
 ylabel('Axial Force (N)');
+title('Force Raw vs Filtered');
 
-title(sprintf( ...
-    'Force Raw vs Filtered - Test Run %d', ...
-    targetRun));
-
-
-legend('Location','best');
-
+legend('Location', 'best');
 grid on;
 
 
 %% ================================================================
-%  11. CREATE OUTPUT TABLE
+%  10. CREATE OUTPUT TABLE
 % ================================================================
 
 T_cleaned = table( ...
@@ -394,19 +246,33 @@ T_cleaned = table( ...
 
 
 %% ================================================================
-%  12. SAVE INDIVIDUAL FILTERED TEST RUN
+%  11. SAVE FILTERED DATA
 % ================================================================
 
+%% ---- Extract test number from original filename ----
+[~, baseName, ~] = fileparts(mtsName);
+
+token = regexp(baseName, 'trial_(\d+)', 'tokens', 'once', 'ignorecase');
+
+if isempty(token)
+    error('Could not identify the trial number from the filename.');
+end
+
+testNumber = str2double(token{1});
+
+%% ---- Create standardized output filename ----
 outName = fullfile( ...
-    dotFolder, ...
-    sprintf( ...
-        'TestRun_%02d_filtered.csv', ...
-        targetRun));
+    mtsFolder, ...
+    sprintf('MTS_Test_%02d_filtered.csv', testNumber));
 
+% Prevent accidental overwriting
+if isfile(outName)
+    error(['Output file already exists: %s\n' ...
+           'Rename or move the existing file before rerunning.'], ...
+           outName);
+end
 
-writetable( ...
-    T_cleaned, ...
-    outName);
+writetable(T_cleaned, outName);
 
 
 %% ================================================================
@@ -414,13 +280,6 @@ writetable( ...
 % ================================================================
 
 fprintf('\n========================================\n');
-
-fprintf( ...
-    'Test Run %d successfully processed.\n', ...
-    targetRun);
-
-fprintf( ...
-    'Saved filtered data to:\n%s\n', ...
-    outName);
-
+fprintf('MTS data successfully processed.\n');
+fprintf('Saved filtered data to:\n%s\n', outName);
 fprintf('========================================\n');
