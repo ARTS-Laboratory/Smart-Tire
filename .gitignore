@@ -1,0 +1,50 @@
+
+# ==========================================
+# Microsoft Office temporary files
+# ==========================================
+~$*
+*.tmp
+*.temp
+*.asd
+*.wbk
+*.xlk
+
+# ==========================================
+# macOS system files
+# ==========================================
+.DS_Store
+.AppleDouble
+._*
+
+# ==========================================
+# Python temporary files
+# ==========================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ==========================================
+# KiCad temporary and backup files
+# ==========================================
+*-backups/
+*.lck
+*.kicad_prl
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*.bak
+*.kicad_pcb.lck
+*.kicad_sch.lck
+fp-info-cache
+
+# ==========================================
+# VS Code local settings
+# ==========================================
+.vscode/
+*.code-workspace
+
+# ==========================================
+# Windows system files
+# ==========================================
+Thumbs.db
+Desktop.ini
